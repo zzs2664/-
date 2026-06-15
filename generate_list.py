@@ -13,7 +13,8 @@ import os
 import re
 from collections import defaultdict
 
-sys.stdout.reconfigure(encoding='utf-8')
+if sys.stdout is not None:
+    sys.stdout.reconfigure(encoding='utf-8')
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import openpyxl
@@ -125,121 +126,6 @@ def format_name_for_output(name):
 # Word 文档生成
 # ============================================================
 
-def add_mixed_font_run(paragraph, text, bold=False, no_wrap=False):
-    """向段落添加文本，自动按字符类型分 run 设置字体。
-
-    中文字符 → 宋体（通过 w:eastAsia）
-    数字/括号/点(·) → Times New Roman（通过 w:ascii/w:hAnsi）
-    空格 → 宋体（独立成组，不跟随相邻字符）
-    no_wrap — 整个文本合并为单个 run 并追加 <w:noWrap/>，
-              西文字体设为 Times New Roman，东亚字体设为宋体。
-    """
-    if not text:
-        return
-
-    # no_wrap 模式：完整字符串作为一个 run，不按字符类型拆分
-    # 关键：西文字体设 Times New Roman，东亚字体设宋体
-    if no_wrap:
-        # 不移除 U+FEFF — 改用语言标记来触发 noLineBreaksAfter 规则
-        run = paragraph.add_run(text)
-        run.font.size = FONT_SIZE
-        run.font.name = FONT_TNR
-        run._element.rPr.rFonts.set(qn('w:eastAsia'), FONT_SONG)
-        if bold:
-            run.font.bold = True
-
-        # 显式标记语言为中文，确保 w:noLineBreaksAfter 规则正确匹配
-        rPr = run._element.get_or_add_rPr()
-        lang_elem = OxmlElement('w:lang')
-        lang_elem.set(qn('w:val'), 'zh-CN')
-        lang_elem.set(qn('w:eastAsia'), 'zh-CN')
-        rPr.append(lang_elem)
-
-        # 含空格时加 preserve 保护
-        if ' ' in text:
-            t_elem = run._element.find(qn('w:t'))
-            if t_elem is not None:
-                t_elem.set('{http://www.w3.org/XML/1998/namespace}space', 'preserve')
-
-        rPr.append(OxmlElement('w:noWrap'))
-        return
-
-    # 以下为非 no_wrap 模式（正常字符类型分组）
-    groups = []
-    current_type = None
-    current_chars = []
-
-    for ch in text:
-        ctype = classify_char(ch)
-        if ctype == 'space':
-            if current_chars:
-                groups.append((current_type, ''.join(current_chars)))
-                current_type = None
-                current_chars = []
-            groups.append(('space', ch))
-            continue
-        if ctype != current_type:
-            if current_chars:
-                groups.append((current_type, ''.join(current_chars)))
-            current_type = ctype
-            current_chars = [ch]
-        else:
-            current_chars.append(ch)
-
-    if current_chars:
-        groups.append((current_type, ''.join(current_chars)))
-
-    # 合并连续空格组，减少 run 数量
-    merged = []
-    for ctype, chunk in groups:
-        if ctype == 'space' and merged and merged[-1][0] == 'space':
-            merged[-1] = ('space', merged[-1][1] + chunk)
-        else:
-            merged.append((ctype, chunk))
-
-    for ctype, chunk in merged:
-        if ctype == 'space':
-            run = paragraph.add_run(chunk)
-            run.font.name = FONT_SONG
-            run._element.rPr.rFonts.set(qn('w:eastAsia'), FONT_SONG)
-            run.font.size = FONT_SIZE
-            if bold:
-                run.font.bold = True
-            continue
-
-        run = paragraph.add_run(chunk)
-        run.font.size = FONT_SIZE
-
-        if ctype == 'chinese':
-            run.font.name = FONT_SONG
-            run._element.rPr.rFonts.set(qn('w:eastAsia'), FONT_SONG)
-        elif ctype == 'digit_punct':
-            run.font.name = FONT_TNR
-            run._element.rPr.rFonts.set(qn('w:eastAsia'), FONT_SONG)
-        else:
-            run.font.name = FONT_TNR
-            run._element.rPr.rFonts.set(qn('w:eastAsia'), FONT_SONG)
-
-        if bold:
-            run.font.bold = True
-
-
-def apply_hanging_indent(paragraph):
-    """为段落设置悬挂缩进（6.25字符/1750 twips）。
-
-    规则：首行缩进 6.25 字符（悬挂缩进），
-    效果：第一行顶格写，续行缩进 6.25 字符。
-    """
-    pPr = paragraph._element.get_or_add_pPr()
-    for existing in pPr.findall(qn('w:ind')):
-        pPr.remove(existing)
-    ind = OxmlElement('w:ind')
-    # leftChars="625" = 6.25字符（以100为单位），left twips 备用值
-    ind.set(qn('w:left'), '1750')
-    ind.set(qn('w:hanging'), '1750')
-    pPr.append(ind)
-
-
 # ============================================================
 # 阶段1：手动分行（绕过 Word CJK 断行引擎）
 # ============================================================
@@ -259,8 +145,8 @@ PF_BOTTOM_CM = 2.54
 INDENT_CHARS = 6.25
 
 # 字符宽度（pt，对应四号字 14pt）
-CJK_WIDTH = 14       # 中文全角字符宽度
-ASCII_WIDTH = 14     # 数字/括号/中点（Times New Roman）宽度同中文全角
+CJK_WIDTH = 14       # 中文全角字符宽度（宋体）
+ASCII_WIDTH = 9      # 数字/括号/中点（Times New Roman）宽度，TNR 14pt 下约 8.5pt
 SPACE_WIDTH = 7      # 半角空格（只有半角字符宽度的一半）
 
 
@@ -292,6 +178,12 @@ def calc_lines_for_class(class_name, name_units):
     usable_pt = (USABLE_WIDTH_CM / 2.54) * 72
     cont_pt = usable_pt - INDENT_CHARS * CJK_WIDTH
 
+    # 每个 name_unit 末尾有 2 个分隔空格，但拼成行后 text.rstrip()
+    # 会去掉行尾空格（只有最后一人的末尾空格被去掉），
+    # 因此计算时最后一人的尾随空格宽度 (14pt) 被多算。
+    # 补偿：允许阈值 +14pt。
+    TRAILING_WIGGLE = 14  # 行尾 rstrip 去掉的 2 空格宽度
+
     lines = []
 
     # 先构建班级首行
@@ -305,7 +197,7 @@ def calc_lines_for_class(class_name, name_units):
 
     for unit in name_units:
         uw = text_width_pt(unit)
-        if first_width + uw <= usable_pt:
+        if first_width + uw <= usable_pt + TRAILING_WIGGLE:
             # 放首行
             first_line += unit
             first_width += uw
@@ -322,7 +214,7 @@ def calc_lines_for_class(class_name, name_units):
         current_width = 0.0
         for unit in cont_units:
             uw = text_width_pt(unit)
-            if current_width + uw <= cont_pt:
+            if current_width + uw <= cont_pt + TRAILING_WIGGLE:
                 current_line += unit
                 current_width += uw
             else:
@@ -382,6 +274,10 @@ def wrap_lines_for_class(score_label, class_name, name_units):
     usable_pt = (USABLE_WIDTH_CM / 2.54) * 72
     cont_pt = usable_pt - INDENT_CHARS * CJK_WIDTH
 
+    # 每个 name_unit 末尾有 2 个分隔空格，但行尾 rstrip 会去掉最后一人的尾随空格，
+    # 因此最后一人的尾随空格宽度 (14pt) 被多算，允许阈值 +14pt 补偿。
+    TRAILING_WIGGLE = 14
+
     # 构建班级首行
     cls_text = class_name + '  '
     cls_width = text_width_pt(cls_text)
@@ -397,13 +293,13 @@ def wrap_lines_for_class(score_label, class_name, name_units):
 
     for unit in name_units:
         uw = text_width_pt(unit)
-        if not has_first_overflow and first_width + uw <= usable_pt:
+        if not has_first_overflow and first_width + uw <= usable_pt + TRAILING_WIGGLE:
             first_names.append(unit)
             first_width += uw
         else:
             has_first_overflow = True
             # 检查是否可以塞进上一条续行
-            if current_cont_width + uw <= cont_pt:
+            if current_cont_width + uw <= cont_pt + TRAILING_WIGGLE:
                 current_cont.append(unit)
                 current_cont_width += uw
             else:
@@ -424,7 +320,7 @@ def wrap_lines_for_class(score_label, class_name, name_units):
                 first_unit = last[0]
                 fw = text_width_pt(first_unit)
                 cur_w = sum(text_width_pt(u) for u in cur)
-                if cur_w + fw <= cont_pt:
+                if cur_w + fw <= cont_pt + TRAILING_WIGGLE:
                     cur.append(first_unit)
                     last.pop(0)
                     if not last:
@@ -513,7 +409,7 @@ def add_mixed_font_run(paragraph, text, bold=False):
 
     中文 → 宋体（w:eastAsia）
     数字/括号/中点· → Times New Roman（w:ascii/w:hAnsi）
-    空格 → 宋体
+    空格 → 不设显式字体，继承主题/样式（匹配人工模板）
     """
     if not text:
         return
@@ -553,8 +449,7 @@ def add_mixed_font_run(paragraph, text, bold=False):
     for ctype, chunk in merged:
         if ctype == 'space':
             run = paragraph.add_run(chunk)
-            run.font.name = FONT_SONG
-            run._element.rPr.rFonts.set(qn('w:eastAsia'), FONT_SONG)
+            # 空格不设显式字体，继承主题/样式（匹配人工模板）
             run.font.size = FONT_SIZE
             if bold:
                 run.font.bold = True
@@ -629,22 +524,20 @@ def generate_word(records, date_str, output_path):
         csc.set(qn('w:val'), 'compressPunctuation')
         settings.append(csc)
 
-    # 页面边距
+    # 页面边距（A4）
     for section in doc.sections:
         section.top_margin = Cm(2.54)
         section.bottom_margin = Cm(2.54)
         section.left_margin = Cm(3.17)
         section.right_margin = Cm(3.17)
+        section.page_width = Cm(21.0)
+        section.page_height = Cm(29.7)
 
-    # 默认字体
+    # 默认字体 — 匹配人工模板：Normal 样式不设行距/段前段后，由 Word 默认决定
     style = doc.styles['Normal']
     style.font.name = FONT_SONG
     style.font.size = FONT_SIZE
     style.element.rPr.rFonts.set(qn('w:eastAsia'), FONT_SONG)
-    pf = style.paragraph_format
-    pf.space_before = Pt(0)
-    pf.space_after = Pt(0)
-    pf.line_spacing = 1.0
 
     # ============ 阶段1：手动分行 ============
     all_lines = generate_all_lines(records)

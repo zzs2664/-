@@ -4,7 +4,8 @@ import sys
 import os
 import subprocess
 
-sys.stdout.reconfigure(encoding='utf-8')
+if sys.stdout is not None:
+    sys.stdout.reconfigure(encoding='utf-8')
 
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_DIR = os.path.join(PROJECT_DIR, '文件模板')

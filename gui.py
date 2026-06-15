@@ -6,7 +6,8 @@ import threading
 import io
 import traceback
 
-sys.stdout.reconfigure(encoding='utf-8')
+if sys.stdout is not None:
+    sys.stdout.reconfigure(encoding='utf-8')
 
 import customtkinter as ctk
 from tkinter import Toplevel, Text, Scrollbar, END, WORD, filedialog, messagebox
@@ -14,11 +15,12 @@ from tkinter import Toplevel, Text, Scrollbar, END, WORD, filedialog, messagebox
 import import_scores
 import generate_list
 
-from utils import scan_excel_date_columns
+from utils import scan_excel_date_columns, get_data_dir, get_bundle_dir
 
-PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
-TEMPLATE_DIR = os.path.join(PROJECT_DIR, '文件模板')
-OUTPUT_DIR = os.path.join(PROJECT_DIR, '输出文件夹')
+DATA_DIR = get_data_dir()       # exe 所在目录（输出路径）
+BUNDLE_DIR = get_bundle_dir()   # 内置数据文件目录（模板等只读文件）
+TEMPLATE_DIR = os.path.join(BUNDLE_DIR, '文件模板')
+OUTPUT_DIR = os.path.join(DATA_DIR, '输出文件夹')
 
 
 def show_output_window(title_key, text):
@@ -450,7 +452,7 @@ class App(ctk.CTk):
 
     def _reset_defaults(self):
         """还原默认 Excel 文件为年级花名册数据表.xlsx"""
-        default = os.path.join(PROJECT_DIR, '年级花名册数据表.xlsx')
+        default = os.path.join(BUNDLE_DIR, '年级花名册数据表.xlsx')
         if os.path.exists(default):
             self.excel_path_var.set(default)
             self.status_var.set("已还原为默认文件")
