@@ -243,10 +243,21 @@ def classify_char(ch):
 # ============================================================
 
 def get_data_dir():
-    """获取项目根目录。"""
+    """获取项目根目录（exe 所在目录或源码目录）。"""
     if getattr(sys, 'frozen', False):
         return os.path.dirname(sys.executable)
     return os.path.dirname(os.path.abspath(__file__))
+
+
+def get_bundle_dir():
+    """获取打包后的数据文件目录（内置的资源文件所在目录）。
+
+    PyInstaller --onedir 模式下，--add-data 添加的文件在 _internal/ 下。
+    https://pyinstaller.org/en/stable/runtime-information.html
+    """
+    if getattr(sys, 'frozen', False):
+        return sys._MEIPASS
+    return get_data_dir()
 
 
 def get_output_dir():
@@ -262,5 +273,5 @@ def get_test_dir():
 
 
 def get_excel_path():
-    """获取年级花名册数据表路径。"""
-    return os.path.join(get_data_dir(), '年级花名册数据表.xlsx')
+    """获取年级花名册数据表路径（从打包内置数据目录读取）。"""
+    return os.path.join(get_bundle_dir(), '年级花名册数据表.xlsx')
